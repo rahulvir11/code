@@ -52,9 +52,7 @@ const EmojiCatcherGame = () => {
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
-    return () => {
-      window.removeEventListener('resize', resizeCanvas);
-    };
+    return () => window.removeEventListener('resize', resizeCanvas);
   }, []);
 
   // Game loop
@@ -169,7 +167,7 @@ const EmojiCatcherGame = () => {
     spawnEmoji();
 
     // Update difficulty
-    objects.difficulty = 1 + gameState.score * 0.02;
+    objects.difficulty = 1 + gameState.score * 0.2;
     objects.spawnRate = Math.max(300, 1000 - gameState.score * 10);
 
     // Update power-up effects
@@ -221,11 +219,7 @@ const EmojiCatcherGame = () => {
           emoji.y + emoji.height > objects.basket.y) {
         
         if (emoji.type === 'regular') {
-          setGameState(prev => {
-            const newScore = prev.score + 1;
-            console.log('Score updated:', newScore); // Debug log
-            return { ...prev, score: newScore };
-          });
+          setGameState(prev => ({ ...prev, score: prev.score + 10 }));
         } else if (emoji.type === 'bad') {
           // Bad emoji caught - check shield first
           
@@ -244,7 +238,6 @@ const EmojiCatcherGame = () => {
             setGameState(prev => ({ ...prev, gameOver: true }));
           }
         } else {
-          // Power-up collected
           applyPowerUp(emoji.type);
         }
         return false;
@@ -259,7 +252,7 @@ const EmojiCatcherGame = () => {
 
       return true;
     });
-  }, [spawnEmoji]);
+  }, [gameState.score, spawnEmoji]);
 
   const applyPowerUp = useCallback((type) => {
     const objects = gameObjects.current;
@@ -386,7 +379,7 @@ const EmojiCatcherGame = () => {
         const floatY = Math.sin(time * 0.008 + emojiId) * 5;
         const floatX = Math.cos(time * 0.006 + emojiId) * 3;
         
-        ctx.translate(baseX + 18 + floatX, baseY - 18 + floatY);
+        ctx.translate(baseX + 10 + floatX, baseY - 10 + floatY);
         
         // Enhanced rotation for mystical effect
         ctx.rotate(Math.sin(time * 0.005 + emojiId) * 0.2);
@@ -413,7 +406,7 @@ const EmojiCatcherGame = () => {
         
         // Enhanced rotation with scale pulsing
         ctx.rotate(Math.sin(time * 0.004 + emojiId) * 0.15);
-        const scale = 1 + 0.12 * Math.sin(time * 0.011 + emojiId);
+        const scale = 1 + 0.02 * Math.sin(time * 0.011 + emojiId);
         ctx.scale(scale, scale);
         
         // Multiple intense protective glows
@@ -435,9 +428,9 @@ const EmojiCatcherGame = () => {
         const loveGlow = 0.9 + 0.1 * Math.sin(time * 0.012 + emojiId);
         
         // Enhanced heart beating scale effect
-        const beatScale = 1 + 0.25 * Math.sin(time * 0.015 + emojiId);
+        const beatScale = 1 + 0.05 * Math.sin(time * 0.015 + emojiId);
         
-        ctx.translate(baseX + 18, baseY - 18);
+        ctx.translate(baseX + 10, baseY - 10);
         ctx.scale(beatScale, beatScale);
         
         // Enhanced gentle floating
@@ -462,7 +455,7 @@ const EmojiCatcherGame = () => {
         const timeWarp = 0.8 + 0.2 * Math.sin(time * 0.02);
         const chronoGlow = 0.8 + 0.2 * Math.cos(time * 0.016 + emojiId);
         
-        ctx.translate(baseX + 18, baseY - 18);
+        ctx.translate(baseX + 8, baseY - 8);
         
         // Enhanced spinning with time distortion
         ctx.rotate(time * 0.005 + emojiId * 0.15);
@@ -612,15 +605,13 @@ const EmojiCatcherGame = () => {
     }
 
     // Draw UI
-    ctx.save(); // Save canvas state before drawing UI
     drawUI(ctx, canvas);
-    ctx.restore(); // Restore canvas state
 
     // Draw power-up effects
     drawEffects(ctx, canvas);
   }, [gameState]);
 
-  const drawUI = (ctx, canvas) => {
+  const drawUI = useCallback((ctx, canvas) => {
     const time = Date.now();
     
     // Reset any previous canvas state
@@ -726,7 +717,7 @@ const EmojiCatcherGame = () => {
     ctx.shadowColor = 'transparent';
     ctx.shadowBlur = 0;
     ctx.restore();
-  };
+  }, [gameState]);
 
   const drawEffects = useCallback((ctx, canvas) => {
     const objects = gameObjects.current;
@@ -913,6 +904,35 @@ const EmojiCatcherGame = () => {
     }
   }, []);
 
+  const resetGame = useCallback(() => {
+    gameObjects.current = {
+      basket: { 
+        x: canvasRef.current?.width / 2 - 30 || 400, 
+        y: canvasRef.current?.height - 80 || 550, 
+        width: 60, 
+        height: 40, 
+        isDragging: false, 
+        dragOffset: { x: 0, y: 0 } 
+      },
+      emojis: [],
+      powerUps: [],
+      effects: {
+        magnet: { active: false, duration: 0 },
+        shield: { active: false, uses: 0 },
+        timeFreeze: { active: false, duration: 0 },
+        shieldFlash: { active: false, duration: 0 }
+      },
+      lastSpawn: 0,
+      spawnRate: 1000,
+      difficulty: 1
+    };
+    setGameState({
+      score: 0,
+      gameOver: false,
+      paused: false
+    });
+  }, []);
+
   // Mouse/Touch event handlers
   const handlePointerDown = useCallback((e) => {
     const canvas = canvasRef.current;
@@ -956,39 +976,6 @@ const EmojiCatcherGame = () => {
 
   const handlePointerUp = useCallback(() => {
     gameObjects.current.basket.isDragging = false;
-  }, []);
-
-  const toggleSound = useCallback(() => {
-    // Sound functionality removed
-  }, []);
-
-  const resetGame = useCallback(() => {
-    gameObjects.current = {
-      basket: { 
-        x: canvasRef.current?.width / 2 - 30 || 400, 
-        y: canvasRef.current?.height - 80 || 550, 
-        width: 60, 
-        height: 40, 
-        isDragging: false, 
-        dragOffset: { x: 0, y: 0 } 
-      },
-      emojis: [],
-      powerUps: [],
-      effects: {
-        magnet: { active: false, duration: 0 },
-        shield: { active: false, uses: 0 },
-        timeFreeze: { active: false, duration: 0 },
-        shieldFlash: { active: false, duration: 0 }
-      },
-      lastSpawn: 0,
-      spawnRate: 1000,
-      difficulty: 1
-    };
-    setGameState({
-      score: 0,
-      gameOver: false,
-      paused: false
-    });
   }, []);
 
   return (
@@ -1035,34 +1022,32 @@ const EmojiCatcherGame = () => {
             textShadow: '0 0 15px rgba(255, 215, 0, 0.8)',
             marginBottom: '20px'
           }}>Final Score: {gameState.score}</div>
-          
-          <div style={{ display: 'flex', gap: '15px', justifyContent: 'center', alignItems: 'center' }}>
-            <button
-              onClick={resetGame}
-              style={{
-                padding: '15px 30px',
-                fontSize: '18px',
-                background: 'linear-gradient(135deg, #4CAF50, #45A049)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '25px',
-                cursor: 'pointer',
-                boxShadow: '0 5px 15px rgba(76, 175, 80, 0.4)',
-                transition: 'all 0.3s ease',
-                textShadow: '0 2px 4px rgba(0, 0, 0, 0.3)'
-              }}
-              onMouseEnter={(e) => {
-                e.target.style.transform = 'scale(1.05)';
-                e.target.style.boxShadow = '0 8px 25px rgba(76, 175, 80, 0.6)';
-              }}
-              onMouseLeave={(e) => {
-                e.target.style.transform = 'scale(1)';
-                e.target.style.boxShadow = '0 5px 15px rgba(76, 175, 80, 0.4)';
-              }}
-            >
-              🎯 Play Again
-            </button>
-          </div>
+          <button
+            onClick={resetGame}
+            style={{
+              marginTop: '10px',
+              padding: '15px 30px',
+              fontSize: '18px',
+              background: 'linear-gradient(135deg, #4CAF50, #45A049)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '25px',
+              cursor: 'pointer',
+              boxShadow: '0 5px 15px rgba(76, 175, 80, 0.4)',
+              transition: 'all 0.3s ease',
+              textShadow: '0 2px 4px rgba(0, 0, 0, 0.3)'
+            }}
+            onMouseEnter={(e) => {
+              e.target.style.transform = 'scale(1.05)';
+              e.target.style.boxShadow = '0 8px 25px rgba(76, 175, 80, 0.6)';
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.transform = 'scale(1)';
+              e.target.style.boxShadow = '0 5px 15px rgba(76, 175, 80, 0.4)';
+            }}
+          >
+            🎯 Play Again
+          </button>
         </div>
       )}
     </div>

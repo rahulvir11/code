@@ -1,0 +1,1072 @@
+'use client';
+
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+
+const EmojiCatcherGame = () => {
+  const canvasRef = useRef(null);
+  const gameLoopRef = useRef(null);
+  const keysPressed = useRef(new Set()); // Move this outside of useEffect
+  const [gameState, setGameState] = useState({
+    score: 0,
+    gameOver: false,
+    paused: false
+  });
+
+  // Game objects
+  const gameObjects = useRef({
+    basket: { x: 400, y: 550, width: 60, height: 40, isDragging: false, dragOffset: { x: 0, y: 0 } },
+    emojis: [],
+    powerUps: [],
+    effects: {
+      magnet: { active: false, duration: 0 },
+      shield: { active: false, uses: 0 },
+      timeFreeze: { active: false, duration: 0 },
+      shieldFlash: { active: false, duration: 0 }
+    },
+    lastSpawn: 0,
+    spawnRate: 1000,
+    difficulty: 1
+  });
+
+  const regularEmojis = ['🍎', '🍊', '🍌', '🍇', '🍓', '🥝', '🍑', '🍒', '🥭', '🍍'];
+  const powerUpEmojis = [
+    { emoji: '🧲', type: 'magnet' },
+    { emoji: '🛡️', type: 'shield' },
+    { emoji: '❤️', type: 'heart' },
+    { emoji: '⏰', type: 'timeFreeze' }
+  ];
+  const badEmojis = ['💣', '☠️', '🔥', '⚠️'];
+
+  // Initialize canvas
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const resizeCanvas = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      gameObjects.current.basket.x = canvas.width / 2 - 30;
+      gameObjects.current.basket.y = canvas.height - 80;
+    };
+
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    return () => {
+      window.removeEventListener('resize', resizeCanvas);
+    };
+  }, []);
+
+  // Game loop
+  useEffect(() => {
+    if (gameState.gameOver || gameState.paused) return;
+
+    const gameLoop = () => {
+      update();
+      draw();
+      gameLoopRef.current = requestAnimationFrame(gameLoop);
+    };
+
+    gameLoopRef.current = requestAnimationFrame(gameLoop);
+
+    return () => {
+      if (gameLoopRef.current) {
+        cancelAnimationFrame(gameLoopRef.current);
+      }
+    };
+  }, [gameState.gameOver, gameState.paused]);
+
+  // Keyboard controls with improved responsiveness
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (gameState.gameOver || gameState.paused) return;
+      
+      if (['ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        e.preventDefault();
+        keysPressed.current.add(e.key);
+      }
+    };
+
+    const handleKeyUp = (e) => {
+      keysPressed.current.delete(e.key);
+    };
+
+    const updateMovement = () => {
+      if (gameState.gameOver || gameState.paused) return;
+      
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      const objects = gameObjects.current;
+      const moveSpeed = 10; // Decreased from 35 to 20 for less sensitive movement
+
+      if (keysPressed.current.has('ArrowLeft')) {
+        objects.basket.x = Math.max(0, objects.basket.x - moveSpeed);
+      }
+      if (keysPressed.current.has('ArrowRight')) {
+        objects.basket.x = Math.min(canvas.width - objects.basket.width, objects.basket.x + moveSpeed);
+      }
+    };
+
+    // Use requestAnimationFrame for smooth movement
+    const moveLoop = () => {
+      updateMovement();
+      requestAnimationFrame(moveLoop);
+    };
+    const moveLoopId = requestAnimationFrame(moveLoop);
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      cancelAnimationFrame(moveLoopId);
+    };
+  }, [gameState.gameOver, gameState.paused]);
+
+  const spawnEmoji = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const now = Date.now();
+    const objects = gameObjects.current;
+
+    if (now - objects.lastSpawn > objects.spawnRate / objects.difficulty) {
+      const rand = Math.random();
+      let emoji;
+      
+      if (rand < 0.05) { // 5% chance for bad emoji
+        emoji = { emoji: badEmojis[Math.floor(Math.random() * badEmojis.length)], type: 'bad' };
+      } else if (rand < 0.15) { // 10% chance for power-up (adjusted range)
+        emoji = powerUpEmojis[Math.floor(Math.random() * powerUpEmojis.length)];
+      } else { // 85% chance for regular emoji
+        emoji = { emoji: regularEmojis[Math.floor(Math.random() * regularEmojis.length)], type: 'regular' };
+      }
+
+      const newEmoji = {
+        x: Math.random() * (canvas.width - 40),
+        y: -40,
+        width: 40,
+        height: 40,
+        speed: (Math.random() * 2 + 1) * objects.difficulty,
+        emoji: emoji.emoji,
+        type: emoji.type || 'regular',
+        id: Date.now() + Math.random()
+      };
+
+      objects.emojis.push(newEmoji);
+      objects.lastSpawn = now;
+    }
+  }, []);
+
+  const update = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const objects = gameObjects.current;
+    
+    spawnEmoji();
+
+    // Update difficulty
+    objects.difficulty = 1 + gameState.score * 0.02;
+    objects.spawnRate = Math.max(300, 1000 - gameState.score * 10);
+
+    // Update power-up effects
+    if (objects.effects.magnet.active) {
+      objects.effects.magnet.duration -= 16;
+      if (objects.effects.magnet.duration <= 0) {
+        objects.effects.magnet.active = false;
+      }
+    }
+
+    if (objects.effects.timeFreeze.active) {
+      objects.effects.timeFreeze.duration -= 16;
+      if (objects.effects.timeFreeze.duration <= 0) {
+        objects.effects.timeFreeze.active = false;
+      }
+    }
+
+    // Update shield flash effect
+    if (objects.effects.shieldFlash.active) {
+      objects.effects.shieldFlash.duration -= 16;
+      if (objects.effects.shieldFlash.duration <= 0) {
+        objects.effects.shieldFlash.active = false;
+      }
+    }
+
+    // Update emojis
+    objects.emojis = objects.emojis.filter(emoji => {
+      // Apply time freeze slowdown effect
+      const speedMultiplier = objects.effects.timeFreeze.active ? 0.2 : 1.0; // Slow down to 20% speed when frozen
+      emoji.y += emoji.speed * speedMultiplier;
+
+      // Magnet effect with improved attraction
+      if (objects.effects.magnet.active) {
+        const dx = objects.basket.x + objects.basket.width / 2 - (emoji.x + emoji.width / 2);
+        const dy = objects.basket.y + objects.basket.height / 2 - (emoji.y + emoji.height / 2);
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance < 180) { // Increased range from 150 to 180
+          const magnetStrength = 1.2; // Increased from 0.8 to 1.2
+          emoji.x += dx * magnetStrength * 0.2; // Increased from 0.15 to 0.2
+          emoji.y += dy * magnetStrength * 0.2; // Increased from 0.15 to 0.2
+        }
+      }
+
+      // Collision detection
+      if (emoji.x < objects.basket.x + objects.basket.width &&
+          emoji.x + emoji.width > objects.basket.x &&
+          emoji.y < objects.basket.y + objects.basket.height &&
+          emoji.y + emoji.height > objects.basket.y) {
+        
+        if (emoji.type === 'regular') {
+          setGameState(prev => {
+            const newScore = prev.score + 1;
+            console.log('Score updated:', newScore); // Debug log
+            return { ...prev, score: newScore };
+          });
+        } else if (emoji.type === 'bad') {
+          // Bad emoji caught - check shield first
+          
+          // Check if shield is active
+          if (objects.effects.shield.active && objects.effects.shield.uses > 0) {
+            // Use shield to protect from bad emoji
+            objects.effects.shield.uses -= 1;
+            if (objects.effects.shield.uses <= 0) {
+              objects.effects.shield.active = false;
+            }
+            // Activate shield flash effect
+            objects.effects.shieldFlash.active = true;
+            objects.effects.shieldFlash.duration = 500; // 0.5 second flash
+          } else {
+            // No shield protection - game over
+            setGameState(prev => ({ ...prev, gameOver: true }));
+          }
+        } else {
+          // Power-up collected
+          applyPowerUp(emoji.type);
+        }
+        return false;
+      }
+
+      // Remove if off screen
+      if (emoji.y > canvas.height) {
+        // Only bad emojis cause game over when caught, not when missed
+        // Regular emojis and power-ups don't cause any penalty when missed
+        return false;
+      }
+
+      return true;
+    });
+  }, [spawnEmoji]);
+
+  const applyPowerUp = useCallback((type) => {
+    const objects = gameObjects.current;
+    
+    switch (type) {
+      case 'magnet':
+        objects.effects.magnet.active = true;
+        objects.effects.magnet.duration = 5000; // Increased from 3000 to 5000ms (5 seconds)
+        break;
+      case 'shield':
+        objects.effects.shield.active = true;
+        objects.effects.shield.uses = 3; // Give 3 shield uses instead of 1
+        break;
+      case 'heart':
+        // Heart power-up no longer needed since there are no lives
+        // But we can keep it for bonus points instead
+        setGameState(prev => ({ 
+          ...prev, 
+          score: prev.score + 50 // Bonus points instead of extra life
+        }));
+        break;
+      case 'timeFreeze':
+        objects.effects.timeFreeze.active = true;
+        objects.effects.timeFreeze.duration = 4000; // Increased from 3000 to 4000ms (4 seconds)
+        break;
+    }
+  }, []);
+
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw dramatic dark animated gradient background
+    const time = Date.now();
+    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    
+    // Animated dark background with shifting colors
+    const darkShift = 0.3 + 0.2 * Math.sin(time * 0.001);
+    const purpleShift = 0.4 + 0.3 * Math.sin(time * 0.0008);
+    const blueShift = 0.5 + 0.2 * Math.cos(time * 0.0012);
+    
+    gradient.addColorStop(0, `rgba(${Math.floor(20 + 15 * darkShift)}, ${Math.floor(25 + 20 * purpleShift)}, ${Math.floor(40 + 30 * blueShift)}, 1)`);
+    gradient.addColorStop(0.3, `rgba(${Math.floor(15 + 10 * darkShift)}, ${Math.floor(15 + 15 * purpleShift)}, ${Math.floor(35 + 25 * blueShift)}, 1)`);
+    gradient.addColorStop(0.7, `rgba(${Math.floor(10 + 8 * darkShift)}, ${Math.floor(10 + 12 * purpleShift)}, ${Math.floor(25 + 20 * blueShift)}, 1)`);
+    gradient.addColorStop(1, `rgba(${Math.floor(5 + 5 * darkShift)}, ${Math.floor(5 + 8 * purpleShift)}, ${Math.floor(15 + 15 * blueShift)}, 1)`);
+    
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Add animated stars/sparkles in the background
+    for (let i = 0; i < 150; i++) {
+      const starX = (i * 137.5) % canvas.width;
+      const starY = (i * 234.7 + time * 0.02) % canvas.height;
+      const twinkle = 0.2 + 0.8 * Math.sin(time * 0.003 + i);
+      const starSize = 1 + Math.sin(time * 0.005 + i) * 0.5;
+      
+      ctx.fillStyle = `rgba(255, 255, 255, ${twinkle * 0.6})`;
+      ctx.beginPath();
+      ctx.arc(starX, starY, starSize, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+    
+    // Add subtle nebula effect
+    const nebulaGradient = ctx.createRadialGradient(
+      canvas.width * 0.7, canvas.height * 0.3, 0,
+      canvas.width * 0.7, canvas.height * 0.3, canvas.width * 0.8
+    );
+    const nebulaOpacity = 0.1 + 0.05 * Math.sin(time * 0.0005);
+    nebulaGradient.addColorStop(0, `rgba(138, 43, 226, ${nebulaOpacity})`);
+    nebulaGradient.addColorStop(0.5, `rgba(75, 0, 130, ${nebulaOpacity * 0.7})`);
+    nebulaGradient.addColorStop(1, 'rgba(25, 25, 112, 0)');
+    
+    ctx.fillStyle = nebulaGradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const objects = gameObjects.current;
+
+    // Draw emojis with intensely enhanced glowing effects
+    ctx.font = 'bold 36px Arial';
+    objects.emojis.forEach(emoji => {
+      const baseX = emoji.x;
+      const baseY = emoji.y + emoji.height;
+      const emojiId = emoji.id || 0;
+      
+      // Save context for transformations
+      ctx.save();
+      
+      if (emoji.type === 'bad') {
+        // Extremely intense danger effects for bad emojis
+        const pulseIntensity = 0.8 + 0.2 * Math.sin(time * 0.015);
+        const dangerGlow = 0.9 + 0.1 * Math.sin(time * 0.018);
+        
+        // Dramatic shake effect
+        const shakeX = Math.sin(time * 0.03 + emojiId) * 5;
+        const shakeY = Math.cos(time * 0.035 + emojiId) * 3;
+        
+        // Pulsating scale
+        const scale = 1 + 0.2 * Math.sin(time * 0.012 + emojiId);
+        ctx.translate(baseX + 18 + shakeX, baseY - 18 + shakeY);
+        ctx.scale(scale, scale);
+        
+        // Multiple intense glow layers
+        ctx.shadowColor = `rgba(255, 0, 0, ${dangerGlow})`;
+        ctx.shadowBlur = 45 + 25 * pulseIntensity;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+        ctx.shadowColor = `rgba(255, 69, 0, ${dangerGlow * 0.9})`;
+        ctx.shadowBlur = 35 + 20 * pulseIntensity;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+        ctx.shadowColor = `rgba(220, 20, 60, ${pulseIntensity})`;
+        ctx.shadowBlur = 25 + 15 * dangerGlow;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+      } else if (emoji.type === 'magnet') {
+        // Intensely magical magnetic field effects
+        const pulseIntensity = 0.9 + 0.1 * Math.sin(time * 0.015);
+        const magneticField = 0.8 + 0.2 * Math.cos(time * 0.01 + emojiId);
+        
+        // Enhanced floating with circular motion
+        const floatY = Math.sin(time * 0.008 + emojiId) * 5;
+        const floatX = Math.cos(time * 0.006 + emojiId) * 3;
+        
+        ctx.translate(baseX + 18 + floatX, baseY - 18 + floatY);
+        
+        // Enhanced rotation for mystical effect
+        ctx.rotate(Math.sin(time * 0.005 + emojiId) * 0.2);
+        
+        // Multiple intense glow layers
+        ctx.shadowColor = `rgba(255, 0, 255, ${magneticField})`;
+        ctx.shadowBlur = 40 + 20 * pulseIntensity;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+        ctx.shadowColor = `rgba(138, 43, 226, ${magneticField * 0.9})`;
+        ctx.shadowBlur = 30 + 15 * pulseIntensity;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+        ctx.shadowColor = `rgba(255, 20, 147, ${pulseIntensity})`;
+        ctx.shadowBlur = 20 + 10 * magneticField;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+      } else if (emoji.type === 'shield') {
+        // Enhanced protective energy shield effects
+        const shieldPulse = 0.9 + 0.1 * Math.sin(time * 0.01);
+        const energyFlow = 0.8 + 0.2 * Math.sin(time * 0.015 + emojiId);
+        
+        ctx.translate(baseX + 18, baseY - 18);
+        
+        // Enhanced rotation with scale pulsing
+        ctx.rotate(Math.sin(time * 0.004 + emojiId) * 0.15);
+        const scale = 1 + 0.12 * Math.sin(time * 0.011 + emojiId);
+        ctx.scale(scale, scale);
+        
+        // Multiple intense protective glows
+        ctx.shadowColor = `rgba(0, 191, 255, ${energyFlow})`;
+        ctx.shadowBlur = 35 + 18 * shieldPulse;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+        ctx.shadowColor = `rgba(30, 144, 255, ${shieldPulse})`;
+        ctx.shadowBlur = 25 + 12 * energyFlow;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+        ctx.shadowColor = `rgba(173, 216, 230, ${energyFlow * 0.8})`;
+        ctx.shadowBlur = 18 + 8 * shieldPulse;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+      } else if (emoji.type === 'heart') {
+        // Enhanced loving heartbeat effects
+        const heartbeat = 0.9 + 0.1 * Math.sin(time * 0.018);
+        const loveGlow = 0.9 + 0.1 * Math.sin(time * 0.012 + emojiId);
+        
+        // Enhanced heart beating scale effect
+        const beatScale = 1 + 0.25 * Math.sin(time * 0.015 + emojiId);
+        
+        ctx.translate(baseX + 18, baseY - 18);
+        ctx.scale(beatScale, beatScale);
+        
+        // Enhanced gentle floating
+        const loveFloat = Math.sin(time * 0.006 + emojiId) * 3;
+        ctx.translate(0, loveFloat);
+        
+        // Multiple intense warm glow layers
+        ctx.shadowColor = `rgba(255, 182, 193, ${loveGlow})`;
+        ctx.shadowBlur = 35 + 15 * heartbeat;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+        ctx.shadowColor = `rgba(255, 105, 180, ${heartbeat})`;
+        ctx.shadowBlur = 25 + 12 * loveGlow;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+        ctx.shadowColor = `rgba(255, 20, 147, ${loveGlow * 0.8})`;
+        ctx.shadowBlur = 15 + 8 * heartbeat;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+      } else if (emoji.type === 'timeFreeze') {
+        // Enhanced temporal distortion effects
+        const timeWarp = 0.8 + 0.2 * Math.sin(time * 0.02);
+        const chronoGlow = 0.8 + 0.2 * Math.cos(time * 0.016 + emojiId);
+        
+        ctx.translate(baseX + 18, baseY - 18);
+        
+        // Enhanced spinning with time distortion
+        ctx.rotate(time * 0.005 + emojiId * 0.15);
+        
+        // Enhanced temporal scale fluctuation
+        const timeScale = 1 + 0.15 * Math.sin(time * 0.018 + emojiId);
+        ctx.scale(timeScale, timeScale);
+        
+        // Multiple intense temporal glows
+        ctx.shadowColor = `rgba(0, 255, 255, ${chronoGlow})`;
+        ctx.shadowBlur = 40 + 20 * timeWarp;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+        ctx.shadowColor = `rgba(64, 224, 208, ${timeWarp})`;
+        ctx.shadowBlur = 30 + 15 * chronoGlow;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+        ctx.shadowColor = `rgba(175, 238, 238, ${chronoGlow * 0.8})`;
+        ctx.shadowBlur = 20 + 10 * timeWarp;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+      } else {
+        // Dramatically enhanced regular emojis with intense freshness glow
+        const freshness = 0.6 + 0.4 * Math.sin(time * 0.01 + emojiId);
+        const sparkle = 0.8 + 0.2 * Math.cos(time * 0.012 + emojiId);
+        
+        ctx.translate(baseX + 18, baseY - 18);
+        
+        // Enhanced floating motion
+        const gentleFloat = Math.sin(time * 0.005 + emojiId) * 2;
+        ctx.translate(0, gentleFloat);
+        
+        // Enhanced size variation for liveliness
+        const fruitScale = 1 + 0.08 * Math.sin(time * 0.009 + emojiId);
+        ctx.scale(fruitScale, fruitScale);
+        
+        // Multiple intense glow layers for regular emojis
+        ctx.shadowColor = `rgba(255, 255, 255, ${freshness})`;
+        ctx.shadowBlur = 25 + 12 * sparkle;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+        ctx.shadowColor = `rgba(255, 215, 0, ${sparkle})`;
+        ctx.shadowBlur = 18 + 8 * freshness;
+        ctx.fillText(emoji.emoji, -18, 18);
+        
+        ctx.shadowColor = `rgba(255, 255, 200, ${freshness * 0.8})`;
+        ctx.shadowBlur = 12 + 6 * sparkle;
+        ctx.fillText(emoji.emoji, -18, 18);
+      }
+      
+      ctx.restore();
+    });
+    
+    // Reset shadow for other elements
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+
+    // Draw dramatically enhanced basket with intense glow effects
+    ctx.font = 'bold 52px Arial';
+    
+    // Enhanced dynamic glow based on game state
+    const basketGlow = 0.8 + 0.2 * Math.sin(time * 0.01);
+    const activeGlow = objects.basket.isDragging ? 1.0 : basketGlow;
+    
+    // Multiple layered glow effect for basket
+    if (objects.basket.isDragging) {
+      // Extremely bright active glow with multiple layers
+      ctx.shadowColor = `rgba(255, 255, 100, ${activeGlow})`;
+      ctx.shadowBlur = 35 + 15 * Math.sin(time * 0.018);
+      
+      // Add slight scale increase when active
+      ctx.save();
+      ctx.translate(objects.basket.x + objects.basket.width / 2, objects.basket.y + objects.basket.height / 2);
+      ctx.scale(1.15, 1.15);
+      ctx.fillText('🧺', -objects.basket.width / 2, objects.basket.height / 2);
+      
+      // Add secondary golden glow layer
+      ctx.shadowColor = `rgba(255, 215, 0, ${activeGlow * 0.8})`;
+      ctx.shadowBlur = 25 + 10 * basketGlow;
+      ctx.fillText('🧺', -objects.basket.width / 2, objects.basket.height / 2);
+      
+      // Add tertiary warm glow layer
+      ctx.shadowColor = `rgba(255, 165, 0, ${activeGlow * 0.6})`;
+      ctx.shadowBlur = 15 + 8 * Math.sin(time * 0.015);
+      ctx.fillText('🧺', -objects.basket.width / 2, objects.basket.height / 2);
+      
+      ctx.restore();
+    } else {
+      // Enhanced gentle floating motion with intense glow when not dragging
+      const basketFloat = Math.sin(time * 0.006) * 2;
+      
+      // Primary golden glow
+      ctx.shadowColor = `rgba(255, 215, 0, ${basketGlow})`;
+      ctx.shadowBlur = 20 + 10 * basketGlow;
+      ctx.fillText('🧺', objects.basket.x, objects.basket.y + objects.basket.height + basketFloat);
+      
+      // Secondary bright white glow
+      ctx.shadowColor = `rgba(255, 255, 255, ${basketGlow * 0.7})`;
+      ctx.shadowBlur = 15 + 8 * Math.sin(time * 0.012);
+      ctx.fillText('🧺', objects.basket.x, objects.basket.y + objects.basket.height + basketFloat);
+      
+      // Tertiary warm amber glow
+      ctx.shadowColor = `rgba(255, 191, 0, ${basketGlow * 0.5})`;
+      ctx.shadowBlur = 10 + 5 * basketGlow;
+      ctx.fillText('🧺', objects.basket.x, objects.basket.y + objects.basket.height + basketFloat);
+    }
+
+    // Enhanced draggable area indicator with modern styling and particles
+    if (objects.basket.isDragging) {
+      const pulseIntensity = 0.5 + 0.5 * Math.sin(time * 0.012);
+      const centerX = objects.basket.x + objects.basket.width / 2;
+      const centerY = objects.basket.y + objects.basket.height / 2;
+      
+      // Outer pulsing ring
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.6 + 0.4 * pulseIntensity})`;
+      ctx.lineWidth = 4;
+      ctx.setLineDash([10, 10]);
+      ctx.lineDashOffset = time * 0.05; // Animated dash movement
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 110 + 15 * pulseIntensity, 0, 2 * Math.PI);
+      ctx.stroke();
+      
+      // Inner glowing ring
+      ctx.strokeStyle = `rgba(255, 215, 0, ${0.8 + 0.2 * pulseIntensity})`;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 6]);
+      ctx.lineDashOffset = -time * 0.03; // Counter-rotating dashes
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 85 + 8 * pulseIntensity, 0, 2 * Math.PI);
+      ctx.stroke();
+      
+      // Add floating particles around the basket
+      for (let i = 0; i < 12; i++) {
+        const angle = (i * Math.PI * 2 / 12) + (time * 0.002);
+        const radius = 120 + 20 * Math.sin(time * 0.008 + i);
+        const particleX = centerX + Math.cos(angle) * radius;
+        const particleY = centerY + Math.sin(angle) * radius;
+        const opacity = 0.4 + 0.4 * Math.sin(time * 0.01 + i);
+        
+        ctx.fillStyle = `rgba(255, 255, 100, ${opacity})`;
+        ctx.beginPath();
+        ctx.arc(particleX, particleY, 3 + Math.sin(time * 0.015 + i), 0, 2 * Math.PI);
+        ctx.fill();
+      }
+      
+      ctx.setLineDash([]); // Reset line dash
+    }
+
+    // Draw UI
+    ctx.save(); // Save canvas state before drawing UI
+    drawUI(ctx, canvas);
+    ctx.restore(); // Restore canvas state
+
+    // Draw power-up effects
+    drawEffects(ctx, canvas);
+  }, [gameState]);
+
+  const drawUI = (ctx, canvas) => {
+    const time = Date.now();
+    
+    // Reset any previous canvas state
+    ctx.save();
+    
+    // Enhanced score display with dramatic glow
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 28px Arial';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    
+    const scoreText = `Score: ${gameState.score}`;
+    
+    // Multiple glow layers for better visibility on dark background
+    ctx.shadowColor = 'rgba(255, 215, 0, 1)';
+    ctx.shadowBlur = 20;
+    ctx.fillText(scoreText, 20, 20);
+    
+    ctx.shadowColor = 'rgba(255, 255, 255, 0.8)';
+    ctx.shadowBlur = 15;
+    ctx.fillText(scoreText, 20, 20);
+    
+    ctx.shadowColor = 'rgba(255, 165, 0, 0.6)';
+    ctx.shadowBlur = 10;
+    ctx.fillText(scoreText, 20, 20);
+    
+    // Add strong stroke for contrast
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.lineWidth = 3;
+    ctx.strokeText(scoreText, 20, 20);
+
+    // Reset for other UI elements
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.restore();
+
+    // Enhanced controls and instructions with better visibility
+    ctx.save();
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 18px Arial';
+    ctx.textAlign = 'right';
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.lineWidth = 2;
+    
+    // Add glow to instruction text
+    ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
+    ctx.shadowBlur = 8;
+    
+    const controlsText = 'Use ← → arrows or drag to move basket';
+    ctx.strokeText(controlsText, canvas.width - 20, 50);
+    ctx.fillText(controlsText, canvas.width - 20, 50);
+
+    const instructionText = 'Catch fruits & power-ups, avoid bad emojis!';
+    ctx.strokeText(instructionText, canvas.width - 20, 75);
+    ctx.fillText(instructionText, canvas.width - 20, 75);
+    
+    ctx.restore();
+
+    // Enhanced power-up indicators with intense glow effects
+    ctx.save();
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 26px Arial';
+    ctx.textAlign = 'left';
+    let yOffset = 70; // Start below the score
+    const objects = gameObjects.current;
+
+    if (objects.effects.magnet.active) {
+      const pulseIntensity = 0.8 + 0.2 * Math.sin(time * 0.012);
+      ctx.shadowColor = `rgba(255, 0, 255, ${pulseIntensity})`;
+      ctx.shadowBlur = 18 + 8 * pulseIntensity;
+      const magnetText = `🧲 ${Math.ceil(objects.effects.magnet.duration / 1000)}s`;
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+      ctx.lineWidth = 2;
+      ctx.strokeText(magnetText, 20, yOffset);
+      ctx.fillText(magnetText, 20, yOffset);
+      yOffset += 45;
+    }
+
+    if (objects.effects.shield.active) {
+      const pulseIntensity = 0.8 + 0.2 * Math.sin(time * 0.01);
+      ctx.shadowColor = `rgba(0, 150, 255, ${pulseIntensity})`;
+      ctx.shadowBlur = 15 + 10 * pulseIntensity;
+      const shieldText = `🛡️ ${objects.effects.shield.uses}`;
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+      ctx.lineWidth = 2;
+      ctx.strokeText(shieldText, 20, yOffset);
+      ctx.fillText(shieldText, 20, yOffset);
+      yOffset += 45;
+    }
+
+    if (objects.effects.timeFreeze.active) {
+      const pulseIntensity = 0.8 + 0.2 * Math.sin(time * 0.015);
+      ctx.shadowColor = `rgba(0, 255, 255, ${pulseIntensity})`;
+      ctx.shadowBlur = 20 + 12 * pulseIntensity;
+      const freezeText = `⏰ ${Math.ceil(objects.effects.timeFreeze.duration / 1000)}s`;
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+      ctx.lineWidth = 2;
+      ctx.strokeText(freezeText, 20, yOffset);
+      ctx.fillText(freezeText, 20, yOffset);
+    }
+    
+    // Reset shadow for other elements
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  };
+
+  const drawEffects = useCallback((ctx, canvas) => {
+    const objects = gameObjects.current;
+    const time = Date.now();
+
+    // Enhanced magnet effect with particle field
+    if (objects.effects.magnet.active) {
+      const pulseIntensity = 0.7 + 0.3 * Math.sin(time * 0.01);
+      const radius = 180 + 25 * Math.sin(time * 0.006); // Increased base radius and variation
+      const centerX = objects.basket.x + objects.basket.width / 2;
+      const centerY = objects.basket.y + objects.basket.height / 2;
+      
+      // Outer magnetic field ring with gradient
+      ctx.strokeStyle = `rgba(255, 0, 255, ${0.5 * pulseIntensity})`;
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+      ctx.stroke();
+      
+      // Middle intensity ring
+      ctx.strokeStyle = `rgba(255, 100, 255, ${0.7 * pulseIntensity})`;
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius - 20, 0, 2 * Math.PI);
+      ctx.stroke();
+      
+      // Inner bright core
+      ctx.strokeStyle = `rgba(255, 200, 255, ${0.9 * pulseIntensity})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius - 35, 0, 2 * Math.PI);
+      ctx.stroke();
+      
+      // Enhanced magnetic field lines with animation
+      for (let i = 0; i < 16; i++) {
+        const angle = (i * Math.PI / 8) + (time * 0.0015);
+        const startRadius = radius - 40;
+        const endRadius = radius + 20;
+        const startX = centerX + Math.cos(angle) * startRadius;
+        const startY = centerY + Math.sin(angle) * startRadius;
+        const endX = centerX + Math.cos(angle) * endRadius;
+        const endY = centerY + Math.sin(angle) * endRadius;
+        
+        const lineOpacity = 0.4 + 0.3 * Math.sin(time * 0.008 + i * 0.5);
+        ctx.strokeStyle = `rgba(255, 0, 255, ${lineOpacity * pulseIntensity})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(endX, endY);
+        ctx.stroke();
+      }
+      
+      // Add floating magnetic particles
+      for (let i = 0; i < 20; i++) {
+        const particleAngle = (i * Math.PI * 2 / 20) + (time * 0.003);
+        const particleRadius = radius - 10 + 15 * Math.sin(time * 0.004 + i);
+        const particleX = centerX + Math.cos(particleAngle) * particleRadius;
+        const particleY = centerY + Math.sin(particleAngle) * particleRadius;
+        const particleOpacity = 0.6 + 0.4 * Math.sin(time * 0.01 + i);
+        
+        ctx.fillStyle = `rgba(255, 0, 255, ${particleOpacity * 0.8})`;
+        ctx.beginPath();
+        ctx.arc(particleX, particleY, 2 + Math.sin(time * 0.02 + i), 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    }
+
+    // Enhanced shield effect with energy waves
+    if (objects.effects.shield.active) {
+      const pulseIntensity = 0.8 + 0.2 * Math.sin(time * 0.012);
+      const centerX = objects.basket.x + objects.basket.width / 2;
+      const centerY = objects.basket.y + objects.basket.height / 2;
+      
+      // Multiple shield layers
+      for (let layer = 0; layer < 3; layer++) {
+        const layerRadius = 80 + layer * 15 + 8 * Math.sin(time * 0.008 + layer);
+        const layerOpacity = (0.6 - layer * 0.15) * pulseIntensity;
+        
+        ctx.strokeStyle = `rgba(0, 150, 255, ${layerOpacity})`;
+        ctx.lineWidth = 6 - layer * 1.5;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, layerRadius, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+      
+      // Shield energy hexagons
+      for (let i = 0; i < 6; i++) {
+        const angle = (i * Math.PI / 3) + (time * 0.002);
+        const hexX = centerX + Math.cos(angle) * 70;
+        const hexY = centerY + Math.sin(angle) * 70;
+        const hexOpacity = 0.4 + 0.3 * Math.sin(time * 0.015 + i);
+        
+        ctx.strokeStyle = `rgba(173, 216, 230, ${hexOpacity})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (let j = 0; j < 6; j++) {
+          const hexAngle = (j * Math.PI / 3) + angle;
+          const hexRadius = 8;
+          const x = hexX + Math.cos(hexAngle) * hexRadius;
+          const y = hexY + Math.sin(hexAngle) * hexRadius;
+          if (j === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      }
+    }
+
+    // Enhanced shield flash with expanding waves
+    if (objects.effects.shieldFlash.active) {
+      const flashIntensity = objects.effects.shieldFlash.duration / 500;
+      const centerX = objects.basket.x + objects.basket.width / 2;
+      const centerY = objects.basket.y + objects.basket.height / 2;
+      
+      // Multiple expanding rings
+      for (let ring = 0; ring < 4; ring++) {
+        const ringRadius = 90 + ring * 20 + (1 - flashIntensity) * 50;
+        const ringOpacity = flashIntensity * (0.8 - ring * 0.15);
+        
+        ctx.strokeStyle = `rgba(255, 255, 255, ${ringOpacity})`;
+        ctx.lineWidth = 10 - ring * 2;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, ringRadius, 0, 2 * Math.PI);
+        ctx.stroke();
+        
+        // Inner energy rings
+        ctx.strokeStyle = `rgba(0, 200, 255, ${ringOpacity * 0.8})`;
+        ctx.lineWidth = 6 - ring * 1.2;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, ringRadius - 10, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+    }
+
+    // Enhanced time freeze with temporal distortion
+    if (objects.effects.timeFreeze.active) {
+      const intensity = 0.25 + 0.15 * Math.sin(time * 0.012);
+      
+      // Temporal overlay with animated gradient
+      const gradient = ctx.createRadialGradient(
+        canvas.width / 2, canvas.height / 2, 0,
+        canvas.width / 2, canvas.height / 2, Math.max(canvas.width, canvas.height)
+      );
+      gradient.addColorStop(0, `rgba(173, 216, 230, ${intensity * 0.3})`);
+      gradient.addColorStop(0.7, `rgba(0, 191, 255, ${intensity * 0.4})`);
+      gradient.addColorStop(1, `rgba(25, 25, 112, ${intensity * 0.5})`);
+      
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Enhanced frozen particles with time ripples
+      for (let i = 0; i < 80; i++) {
+        const x = (i * 137.5) % canvas.width;
+        const y = (i * 234.7 + time * 0.03) % canvas.height;
+        const opacity = 0.4 + 0.3 * Math.sin(time * 0.004 + i);
+        const size = 2 + Math.sin(time * 0.006 + i);
+        
+        // Main particle
+        ctx.fillStyle = `rgba(255, 255, 255, ${opacity})`;
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, 2 * Math.PI);
+        ctx.fill();
+        
+        // Particle trail
+        ctx.fillStyle = `rgba(173, 216, 230, ${opacity * 0.5})`;
+        ctx.beginPath();
+        ctx.arc(x, y + 10, size * 0.5, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+      
+      // Time ripple effects
+      for (let ripple = 0; ripple < 5; ripple++) {
+        const rippleRadius = (time * 0.5 + ripple * 200) % (canvas.width + 200);
+        const rippleOpacity = 0.3 * (1 - (rippleRadius / canvas.width));
+        
+        if (rippleOpacity > 0) {
+          ctx.strokeStyle = `rgba(0, 255, 255, ${rippleOpacity})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(canvas.width / 2, canvas.height / 2, rippleRadius, 0, 2 * Math.PI);
+          ctx.stroke();
+        }
+      }
+    }
+  }, []);
+
+  // Mouse/Touch event handlers
+  const handlePointerDown = useCallback((e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    const objects = gameObjects.current;
+    
+    // Check if click/touch is anywhere near the basket area (expanded hitbox)
+    const basketCenterX = objects.basket.x + objects.basket.width / 2;
+    const basketCenterY = objects.basket.y + objects.basket.height / 2;
+    const expandedHitbox = 100; // Larger area around basket for easier dragging
+    
+    if (Math.abs(x - basketCenterX) <= expandedHitbox && 
+        Math.abs(y - basketCenterY) <= expandedHitbox) {
+      objects.basket.isDragging = true;
+      objects.basket.dragOffset = {
+        x: x - objects.basket.x,
+        y: y - objects.basket.y
+      };
+      e.preventDefault();
+    }
+  }, []);
+
+  const handlePointerMove = useCallback((e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const objects = gameObjects.current;
+    if (!objects.basket.isDragging) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+
+    objects.basket.x = Math.max(0, Math.min(canvas.width - objects.basket.width, x - objects.basket.dragOffset.x));
+    e.preventDefault();
+  }, []);
+
+  const handlePointerUp = useCallback(() => {
+    gameObjects.current.basket.isDragging = false;
+  }, []);
+
+  const toggleSound = useCallback(() => {
+    // Sound functionality removed
+  }, []);
+
+  const resetGame = useCallback(() => {
+    gameObjects.current = {
+      basket: { 
+        x: canvasRef.current?.width / 2 - 30 || 400, 
+        y: canvasRef.current?.height - 80 || 550, 
+        width: 60, 
+        height: 40, 
+        isDragging: false, 
+        dragOffset: { x: 0, y: 0 } 
+      },
+      emojis: [],
+      powerUps: [],
+      effects: {
+        magnet: { active: false, duration: 0 },
+        shield: { active: false, uses: 0 },
+        timeFreeze: { active: false, duration: 0 },
+        shieldFlash: { active: false, duration: 0 }
+      },
+      lastSpawn: 0,
+      spawnRate: 1000,
+      difficulty: 1
+    };
+    setGameState({
+      score: 0,
+      gameOver: false,
+      paused: false
+    });
+  }, []);
+
+  return (
+    <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden' }}>
+      <canvas
+        ref={canvasRef}
+        style={{
+          display: 'block',
+          cursor: gameObjects.current.basket.isDragging ? 'grabbing' : 'grab',
+          touchAction: 'none'
+        }}
+        onMouseDown={handlePointerDown}
+        onMouseMove={handlePointerMove}
+        onMouseUp={handlePointerUp}
+        onMouseLeave={handlePointerUp}
+        onTouchStart={handlePointerDown}
+        onTouchMove={handlePointerMove}
+        onTouchEnd={handlePointerUp}
+      />
+      
+      {gameState.gameOver && (
+        <div style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          background: 'linear-gradient(135deg, rgba(0, 0, 0, 0.9), rgba(30, 30, 60, 0.9))',
+          color: 'white',
+          padding: '30px',
+          borderRadius: '20px',
+          textAlign: 'center',
+          fontSize: '24px',
+          boxShadow: '0 20px 40px rgba(0, 0, 0, 0.5), 0 0 30px rgba(255, 255, 255, 0.1)',
+          border: '2px solid rgba(255, 255, 255, 0.2)',
+          backdropFilter: 'blur(10px)'
+        }}>
+          <div style={{ 
+            marginBottom: '15px',
+            textShadow: '0 0 10px rgba(255, 100, 100, 0.8)'
+          }}>🎮 Game Over! 🎮</div>
+          <div style={{ 
+            fontSize: '28px',
+            color: '#FFD700',
+            textShadow: '0 0 15px rgba(255, 215, 0, 0.8)',
+            marginBottom: '20px'
+          }}>Final Score: {gameState.score}</div>
+          
+          <div style={{ display: 'flex', gap: '15px', justifyContent: 'center', alignItems: 'center' }}>
+            <button
+              onClick={resetGame}
+              style={{
+                padding: '15px 30px',
+                fontSize: '18px',
+                background: 'linear-gradient(135deg, #4CAF50, #45A049)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '25px',
+                cursor: 'pointer',
+                boxShadow: '0 5px 15px rgba(76, 175, 80, 0.4)',
+                transition: 'all 0.3s ease',
+                textShadow: '0 2px 4px rgba(0, 0, 0, 0.3)'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.transform = 'scale(1.05)';
+                e.target.style.boxShadow = '0 8px 25px rgba(76, 175, 80, 0.6)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.transform = 'scale(1)';
+                e.target.style.boxShadow = '0 5px 15px rgba(76, 175, 80, 0.4)';
+              }}
+            >
+              🎯 Play Again
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default EmojiCatcherGame;

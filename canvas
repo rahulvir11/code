@@ -1,0 +1,621 @@
+"use client";
+import { useEffect, useRef, useCallback, useState } from "react";
+import { Stage, Layer, Text, Rect, Circle, Star, Image } from "react-konva";
+import { useParticleSystem } from "../hooks/useParticleSystem";
+import { CONTROLS } from "../constants/gameConstants";
+
+export default function KonvaGameCanvas({
+  emojis,
+  basket,
+  powerUps,
+  onUpdateBasketPosition,
+  gameStarted,
+  gameOver,
+  isPaused,
+  gameState,
+  onStartGame,
+  onRestart,
+  onEmojiCatch,
+  onPowerUpCatch,
+  setBasket
+}) {
+
+  const stageRef = useRef();
+  const basketRef = useRef({...basket});
+  const {
+    particles,
+    createStarBurst,
+    createPowerUpEffect,
+    createScoreText,
+    createPowerUpText,
+    createLifeText,
+    clearParticles,
+  } = useParticleSystem();
+
+  // Load basket SVG image
+  const [basketImage, setBasketImage] = useState(null);
+  
+  useEffect(() => {
+    const img = new window.Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      setBasketImage(img);
+    };
+    img.src = "/basket.svg";
+  }, []);
+
+  // Responsive scaling
+  const [containerSize, setContainerSize] = useState({
+    width: 600,
+    height: 600,
+  });
+  const containerRef = useRef();
+
+  useEffect(() => {
+    const updateSize = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        const size = Math.min(rect.width, rect.height);
+        let newDimensions = { width: rect.width, height: rect.height };
+        setContainerSize(newDimensions);
+        setBasket((prev) => ({
+          ...prev,
+          x: Math.min(prev.x, newDimensions.width - (prev.width || 80)),
+          y: Math.min(prev.y, newDimensions.height - (prev.height || 20)),
+        }));
+      }
+    };
+
+    updateSize();
+    window.addEventListener("resize", updateSize);
+    return () => window.removeEventListener("resize", updateSize);
+  }, []);
+
+  const scale = Math.min(
+    containerSize.width / containerSize.width,
+    containerSize.height / containerSize.height
+  );
+
+  // Keyboard state
+  const keysPressed = useRef(new Set());
+  const animationFrame = useRef(null);
+
+  // Handle mouse movement for basket control
+  const handleMouseMove = useCallback(
+    (e) => {
+      if (!gameStarted || gameOver || isPaused) return;
+
+      const stage = e.target.getStage();
+      const pointerPos = stage.getPointerPosition();
+      const relativeX = pointerPos.x / scale; // Adjust for scaling
+
+      onUpdateBasketPosition(relativeX - basket.width / 2);
+    },
+    [
+      onUpdateBasketPosition,
+      basket.width,
+      gameStarted,
+      gameOver,
+      isPaused,
+      scale,
+    ]
+  );
+
+  // Handle touch movement for mobile
+  const handleTouchMove = useCallback(
+    (e) => {
+      if (!gameStarted || gameOver || isPaused) return;
+
+      const stage = e.target.getStage();
+      const pointerPos = stage.getPointerPosition();
+      const relativeX = pointerPos.x / scale; // Adjust for scaling
+
+      onUpdateBasketPosition(relativeX - basket.width / 2);
+    },
+    [
+      onUpdateBasketPosition,
+      basket.width,
+      gameStarted,
+      gameOver,
+      isPaused,
+      scale,
+    ]
+  );
+
+  // Handle clicks for game start/restart
+  const handleClick = useCallback(() => {
+    if (!gameStarted && !gameOver) {
+      onStartGame();
+    } else if (gameOver) {
+      onRestart();
+    }
+  }, [gameStarted, gameOver, onStartGame, onRestart]);
+
+  // Smooth keyboard movement animation
+  const smoothMovement = useCallback(() => {
+    if (
+      keysPressed.current.size === 0 ||
+      !gameStarted ||
+      gameOver ||
+      isPaused
+    ) {
+      animationFrame.current = null;
+      return;
+    }
+
+    let deltaX = 0;
+
+    if (
+      keysPressed.current.has("ArrowLeft") &&
+      !keysPressed.current.has("ArrowRight")
+    ) {
+      deltaX = -CONTROLS.BASKET_SPEED;
+    } else if (
+      keysPressed.current.has("ArrowRight") &&
+      !keysPressed.current.has("ArrowLeft")
+    ) {
+      deltaX = CONTROLS.BASKET_SPEED;
+    }
+
+    if (deltaX !== 0 && basket && typeof basket.x === "number") {
+      const newX = basket.x + deltaX;
+      const boundedX = Math.max(
+        0,
+        Math.min(containerSize.width - (basket.width || 80), newX)
+      );
+      onUpdateBasketPosition(boundedX);
+    }
+
+    // Continue animation
+    animationFrame.current = requestAnimationFrame(smoothMovement);
+  }, [
+    gameStarted,
+    gameOver,
+    isPaused,
+    onUpdateBasketPosition,
+    basket.x,
+    basket.width,
+    containerSize.width,
+  ]);
+
+  // Handle keyboard input for basket movement
+  const handleKeyDown = useCallback(
+    (e) => {
+      if (!gameStarted || gameOver || isPaused) return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+
+        // Don't add if already pressed (avoid duplicate adds from key repeat)
+        if (!keysPressed.current.has(e.key)) {
+          keysPressed.current.add(e.key);
+        }
+
+        // Start smooth animation if not already running
+        if (!animationFrame.current) {
+          animationFrame.current = requestAnimationFrame(smoothMovement);
+        }
+      }
+    },
+    [gameStarted, gameOver, isPaused, smoothMovement]
+  );
+
+  const handleKeyUp = useCallback((e) => {
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      keysPressed.current.delete(e.key);
+
+      // Stop animation if no keys are pressed
+      if (keysPressed.current.size === 0 && animationFrame.current) {
+        cancelAnimationFrame(animationFrame.current);
+        animationFrame.current = null;
+      }
+    }
+  }, []);
+
+  // Render basket with SVG image and visual effects based on power-ups
+  const renderBasket = () => {
+    // Always show fallback rectangle for debugging
+    const basketColor = gameState?.activePowerUps?.shield?.active
+      ? "#3B82F6"
+      : gameState?.activePowerUps?.magnet?.active
+        ? "#EF4444"
+        : "#10B981";
+
+    if (!basketImage) {
+      return (
+        <Rect
+          ref={basketRef}
+          x={basket.x || 0}
+          y={basket.y || 520}
+          width={basket.width || 80}
+          height={basket.height || 60}
+          fill={basketColor}
+          cornerRadius={8}
+          stroke="#000"
+          strokeWidth={2}
+        />
+      );
+    }
+
+    // Create filters for power-up effects
+    const filters = [];
+    if (gameState.activePowerUps.shield.active) {
+      filters.push("brightness(1.2)", "hue-rotate(180deg)"); // Blue tint
+    }
+    if (gameState.activePowerUps.magnet.active) {
+      filters.push("brightness(1.1)", "hue-rotate(300deg)"); // Red tint
+    }
+
+    return (
+      <Image
+        ref={basketRef}
+        x={basket.x || 0}
+        y={basket.y || 520}
+        width={basket.width || 80}
+        height={basket.height || 60}
+        image={basketImage}
+        shadowColor="rgba(0,0,0,0.4)"
+        shadowBlur={6}
+        shadowOffset={{ x: 3, y: 3 }}
+        filters={filters.length > 0 ? filters : undefined}
+      />
+    );
+  };
+
+  // Render emojis as text elements
+  const renderEmojis = () => {
+    return emojis.map((emoji) => (
+      <Text
+        key={emoji.id}
+        x={emoji.x}
+        y={emoji.y}
+        text={emoji.emoji}
+        fontSize={emoji.size}
+        fill={emoji.isGood ? "#10B981" : "#EF4444"}
+        shadowColor="rgba(0,0,0,0.3)"
+        shadowBlur={3}
+        shadowOffset={{ x: 1, y: 1 }}
+      />
+    ));
+  };
+
+  // Render power-ups with special effects
+  const renderPowerUps = () => {
+    return powerUps.map((powerUp) => (
+      <Text
+        key={powerUp.id}
+        x={powerUp.x}
+        y={powerUp.y}
+        text={powerUp.emoji}
+        fontSize={powerUp.size}
+        fill="#F59E0B"
+        shadowColor="rgba(245, 158, 11, 0.5)"
+        shadowBlur={8}
+        shadowOffset={{ x: 0, y: 0 }}
+      />
+    ));
+  };
+
+  // Render particles
+  const renderParticles = () => {
+    return particles.map((particle) => {
+      if (particle.type === "star") {
+        return (
+          <Star
+            key={particle.id}
+            x={particle.x}
+            y={particle.y}
+            numPoints={5}
+            innerRadius={particle.size / 2}
+            outerRadius={particle.size}
+            fill={particle.color}
+            opacity={particle.life}
+          />
+        );
+      } else if (
+        particle.type === "scoreText" ||
+        particle.type === "powerUpText" ||
+        particle.type === "lifeText"
+      ) {
+        return (
+          <Text
+            key={particle.id}
+            x={particle.x}
+            y={particle.y}
+            text={particle.text}
+            fontSize={particle.fontSize}
+            fill={particle.color}
+            fontStyle="bold"
+            stroke="#000"
+            strokeWidth={1}
+            opacity={particle.life}
+            shadowColor="rgba(0,0,0,0.8)"
+            shadowBlur={2}
+            shadowOffset={{ x: 1, y: 1 }}
+          />
+        );
+      } else {
+        return (
+          <Circle
+            key={particle.id}
+            x={particle.x}
+            y={particle.y}
+            radius={particle.size}
+            fill={particle.color}
+            opacity={particle.life}
+          />
+        );
+      }
+    });
+  };
+
+  // Render particle effects for active power-ups
+  const renderPowerUpEffects = () => {
+    const effects = [];
+
+    // Magnet field effect
+    if (gameState.activePowerUps.magnet.active) {
+      effects.push(
+        <Circle
+          key="magnet-effect"
+          x={basket.x + basket.width / 2}
+          y={basket.y + basket.height / 2}
+          radius={150}
+          fill="transparent"
+          stroke="#EF4444"
+          strokeWidth={2}
+          opacity={0.3}
+          dash={[5, 5]}
+        />
+      );
+    }
+
+    // Shield effect
+    if (gameState.activePowerUps.shield.active) {
+      effects.push(
+        <Circle
+          key="shield-effect"
+          x={basket.x + basket.width / 2}
+          y={basket.y + basket.height / 2}
+          radius={60}
+          fill="rgba(59, 130, 246, 0.2)"
+          stroke="#3B82F6"
+          strokeWidth={3}
+        />
+      );
+    }
+
+    return effects;
+  };
+
+  // Clear particles when game resets
+  useEffect(() => {
+    if (!gameStarted) {
+      clearParticles();
+    }
+  }, [gameStarted, clearParticles]);
+
+  // Store particle creation functions in refs to avoid render-time calls
+  const particleEffectsRef = useRef({
+    createScoreText,
+    createPowerUpText,
+    createStarBurst,
+    createPowerUpEffect,
+  });
+
+  // Update refs when functions change
+  useEffect(() => {
+    particleEffectsRef.current = {
+      createScoreText,
+      createPowerUpText,
+      createLifeText,
+      createStarBurst,
+      createPowerUpEffect,
+    };
+  }, [
+    createScoreText,
+    createPowerUpText,
+    createLifeText,
+    createStarBurst,
+    createPowerUpEffect,
+  ]);
+
+  // Expose particle functions globally for game logic to use
+  useEffect(() => {
+    window.gameCanvasEffects = particleEffectsRef.current;
+
+    return () => {
+      delete window.gameCanvasEffects;
+    };
+  }, []);
+
+  // Add keyboard event listeners
+  useEffect(() => {
+    const handleKeyDownGlobal = (e) => handleKeyDown(e);
+    const handleKeyUpGlobal = (e) => handleKeyUp(e);
+
+    window.addEventListener("keydown", handleKeyDownGlobal);
+    window.addEventListener("keyup", handleKeyUpGlobal);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDownGlobal);
+      window.removeEventListener("keyup", handleKeyUpGlobal);
+
+      // Clean up animation frame
+      if (animationFrame.current) {
+        cancelAnimationFrame(animationFrame.current);
+        animationFrame.current = null;
+      }
+    };
+  }, [handleKeyDown, handleKeyUp]);
+
+  // Focus the stage to capture keyboard events
+  useEffect(() => {
+    if (stageRef.current && gameStarted && !gameOver) {
+      const stage = stageRef.current.getStage();
+      if (stage) {
+        stage.container().tabIndex = 0;
+        stage.container().focus();
+      }
+    }
+  }, [gameStarted, gameOver]);
+
+  return (
+    <div className="relative">
+      {/* Responsive container that maintains aspect ratio */}
+      <div
+        ref={containerRef}
+        className="relative w-full h-[70vh] md:w-[40vw] md:h-[70vh] sm:h-[80vh]  rounded-lg mx-auto"
+        style={{ aspectRatio: "1 / 1" }}
+      >
+        <Stage
+          ref={stageRef}
+          width={containerSize.width}
+          height={containerSize.height}
+          onMouseMove={handleMouseMove}
+          onTouchMove={handleTouchMove}
+          onClick={handleClick}
+          onTouchEnd={handleClick} // <-- Fix for mobile tap
+          className="cursor-none absolute inset-0"
+          style={{
+            transform: `scale(${scale})`,
+            transformOrigin: "0 0",
+            width: containerSize.width * scale,
+            height: containerSize.height * scale,
+          }}
+        >
+          <Layer>
+            {/* Background gradient effect */}
+            <Rect
+              x={0}
+              y={0}
+              width={containerSize.width}
+              height={containerSize.height}
+              fill={`rgba(255, 255, 255, 0.05)`}
+              stroke={`rgba(255, 255, 255, 0.9)`}
+              strokeWidth={1}
+              
+            />
+
+            {/* Game objects */}
+            {renderEmojis()}
+            {renderPowerUps()}
+            {renderPowerUpEffects()}
+            {renderBasket()}
+            {renderParticles()}
+
+            {/* Pause overlay */}
+            {isPaused && (
+              <>
+                <Rect
+                  x={0}
+                  y={0}
+                  width={containerSize.width}
+                  height={containerSize.height}
+                  fill="rgba(0,0,0,0.7)"
+                />
+                <Text
+                  x={containerSize.width / 2}
+                  y={containerSize.height / 2}
+                  text="PAUSED"
+                  fontSize={48}
+                  fill="#FFFFFF"
+                  fontStyle="bold"
+                  offsetX={80}
+                  offsetY={24}
+                />
+              </>
+            )}
+
+            {/* Game over overlay */}
+            {gameOver && (
+              <>
+                <Rect
+                  x={0}
+                  y={0}
+                  width={containerSize.width}
+                  height={containerSize.height}
+                  fill="rgba(0,0,0,0.8)"
+                />
+                <Text
+                  x={containerSize.width / 2}
+                  y={containerSize.height / 2 - 30}
+                  text="GAME OVER"
+                  fontSize={42}
+                  fill="#EF4444"
+                  fontStyle="bold"
+                  offsetX={105}
+                  offsetY={21}
+                />
+                <Text
+                  x={containerSize.width / 2}
+                  y={containerSize.height / 2 + 30}
+                  text="Click to restart"
+                  fontSize={18}
+                  fill="#FFFFFF"
+                  offsetX={60}
+                  offsetY={9}
+                />
+              </>
+            )}
+
+            {/* Start screen */}
+            {!gameStarted && !gameOver && (
+              <>
+                <Rect
+                  x={0}
+                  y={0}
+                  width={containerSize.width}
+                  height={containerSize.height}
+                  fill="rgba(0,0,0,0.8)"
+                />
+                <Text
+                  x={containerSize.width / 2}
+                  y={containerSize.height / 2 - 30}
+                  text="EMOJI CATCHER"
+                  fontSize={36}
+                  fill="#10B981"
+                  fontStyle="bold"
+                  offsetX={120}
+                  offsetY={18}
+                />
+                <Text
+                  x={containerSize.width / 2}
+                  y={containerSize.height / 2 + 15}
+                  text="Use mouse or arrow keys to control basket"
+                  fontSize={16}
+                  fill="#FFFFFF"
+                  offsetX={140}
+                  offsetY={8}
+                />
+                <Text
+                  x={containerSize.width / 2}
+                  y={containerSize.height / 2 + 40}
+                  text="Catch good emojis, avoid bad ones!"
+                  fontSize={14}
+                  fill="#FFFFFF"
+                  offsetX={100}
+                  offsetY={7}
+                />
+                <Text
+                  x={containerSize.width / 2}
+                  y={containerSize.height / 2 + 60}
+                  text="← → Arrow Keys or Mouse"
+                  fontSize={12}
+                  fill="#F59E0B"
+                  offsetX={80}
+                  offsetY={6}
+                />
+              </>
+            )}
+          </Layer>
+        </Stage>
+
+        {/* Performance indicator */}
+        <div className="absolute top-2 right-2 text-xs text-gray-400">
+          Konva.js Powered
+        </div>
+      </div>
+    </div>
+  );
+}

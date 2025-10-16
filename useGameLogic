@@ -1,0 +1,439 @@
+'use client';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { soundManager } from '../utils/soundManager';
+import { 
+  GAME_CONFIG, 
+  EMOJI_COLLECTIONS, 
+  POWER_UP_TYPES, 
+  STORAGE_KEYS,
+  SCORING 
+} from '../constants/gameConstants';
+
+export function useGameLogic() {
+  const [score, setScore] = useState(0);
+  const [highScore, setHighScore] = useState(0);
+  const [lives, setLives] = useState(3);
+  const [gameOver, setGameOver] = useState(false);
+  const [gameStarted, setGameStarted] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [emojis, setEmojis] = useState([]);
+  const [powerUps, setPowerUps] = useState([]);
+  const [effectQueue, setEffectQueue] = useState([]);
+  const [basket, setBasket] = useState({ 
+    x: GAME_CONFIG.BASKET.INITIAL_X, 
+    y: GAME_CONFIG.BASKET.INITIAL_Y, 
+    width: GAME_CONFIG.BASKET.WIDTH, 
+    height: GAME_CONFIG.BASKET.HEIGHT 
+  });
+  const [gameState, setGameState] = useState({
+    activePowerUps: {
+      magnet: { active: false, timeLeft: 0 },
+      shield: { active: false, timeLeft: 0 },
+      timeFreeze: { active: false, timeLeft: 0 },
+      lifeline: { active: false, timeLeft: 0 }
+    },
+    speed: GAME_CONFIG.BASKET.SPEED,
+    spawnRate: GAME_CONFIG.EMOJIS.SPAWN_RATE_INITIAL
+  });
+
+  const gameLoopRef = useRef();
+  const lastSpawnRef = useRef(Date.now());
+  const emojiIdRef = useRef(0);
+
+  // Load high score from localStorage
+  useEffect(() => {
+    const savedHighScore = localStorage.getItem(STORAGE_KEYS.HIGH_SCORE);
+    if (savedHighScore) {
+      setHighScore(parseInt(savedHighScore, 10));
+    }
+  }, []);
+
+  // Save high score when it changes
+  useEffect(() => {
+    if (score > highScore) {
+      setHighScore(score);
+      localStorage.setItem(STORAGE_KEYS.HIGH_SCORE, score.toString());
+    }
+  }, [score, highScore]);
+
+  const createEmoji = useCallback((x = null, y = 0) => {
+    const isGood = Math.random() > (1 - GAME_CONFIG.EMOJIS.GOOD_CHANCE);
+    const emojiArray = isGood ? EMOJI_COLLECTIONS.GOOD_EMOJIS : EMOJI_COLLECTIONS.BAD_EMOJIS;
+    const randomEmoji = emojiArray[Math.floor(Math.random() * emojiArray.length)];
+    
+    return {
+      id: emojiIdRef.current++,
+      emoji: randomEmoji,
+      x: x ?? Math.random() * (GAME_CONFIG.CANVAS.WIDTH - GAME_CONFIG.EMOJIS.SIZE),
+      y: y,
+      size: GAME_CONFIG.EMOJIS.SIZE,
+      speed: (GAME_CONFIG.EMOJIS.MIN_SPEED + Math.random() * (GAME_CONFIG.EMOJIS.MAX_SPEED - GAME_CONFIG.EMOJIS.MIN_SPEED)) * gameState.speed,
+      isGood,
+      points: isGood ? GAME_CONFIG.SCORING.GOOD_EMOJI_POINTS : GAME_CONFIG.SCORING.BAD_EMOJI_PENALTY
+    };
+  }, [gameState.speed]);
+
+  const createPowerUp = useCallback((x = null, y = 0) => {
+    const randomPowerUp = EMOJI_COLLECTIONS.POWER_UP_EMOJIS[Math.floor(Math.random() * EMOJI_COLLECTIONS.POWER_UP_EMOJIS.length)];
+    
+    return {
+      id: emojiIdRef.current++,
+      emoji: randomPowerUp,
+      type: POWER_UP_TYPES[randomPowerUp],
+      x: x ?? Math.random() * (GAME_CONFIG.CANVAS.WIDTH - GAME_CONFIG.POWER_UPS.SIZE),
+      y: y,
+      size: GAME_CONFIG.POWER_UPS.SIZE,
+      speed: (GAME_CONFIG.POWER_UPS.MIN_SPEED + Math.random() * (GAME_CONFIG.POWER_UPS.MAX_SPEED - GAME_CONFIG.POWER_UPS.MIN_SPEED)) * gameState.speed
+    };
+  }, [gameState.speed]);
+
+  const checkCollision = useCallback((obj1, obj2) => {
+    // More accurate collision detection for circular emojis and rectangular basket
+    const emojiCenterX = obj1.x + obj1.size / 2;
+    const emojiCenterY = obj1.y + obj1.size / 2;
+    const emojiRadius = obj1.size / 2;
+    
+    // Check if emoji center is within basket bounds with radius consideration
+    return emojiCenterX + emojiRadius > obj2.x &&
+           emojiCenterX - emojiRadius < obj2.x + obj2.width &&
+           emojiCenterY + emojiRadius > obj2.y &&
+           emojiCenterY - emojiRadius < obj2.y + obj2.height;
+  }, []);
+
+  const activatePowerUp = useCallback((type) => {
+    setGameState(prev => ({
+      ...prev,
+      activePowerUps: {
+        ...prev.activePowerUps,
+        [type]: { active: true, timeLeft: 5000 } // 5 seconds
+      }
+    }));
+
+    // Auto-deactivate after 5 seconds
+    setTimeout(() => {
+      setGameState(prev => ({
+        ...prev,
+        activePowerUps: {
+          ...prev.activePowerUps,
+          [type]: { active: false, timeLeft: 0 }
+        }
+      }));
+    }, 5000);
+  }, []);
+
+  const updateBasketPosition = useCallback((x) => {
+    if (typeof x !== 'number' || isNaN(x)) return;
+    
+    setBasket(prev => {
+      const newX = Math.max(0, Math.min(GAME_CONFIG.CANVAS.WIDTH - prev.width, x));
+      return prev.x === newX ? prev : {
+        ...prev,
+        x: newX
+      };
+    });
+  }, []);
+
+  const gameLoop = useCallback(() => {
+    if (isPaused || gameOver || !gameStarted) return;
+
+    const now = Date.now();
+    
+    // Spawn new emojis
+    if (now - lastSpawnRef.current > gameState.spawnRate) {
+      // Spawn emojis based on configuration
+      const emojiCount = Math.floor(Math.random() * (GAME_CONFIG.EMOJIS.SPAWN_COUNT_MAX - GAME_CONFIG.EMOJIS.SPAWN_COUNT_MIN + 1)) + GAME_CONFIG.EMOJIS.SPAWN_COUNT_MIN;
+      const newEmojis = [];
+      
+      for (let i = 0; i < emojiCount; i++) {
+        newEmojis.push(createEmoji());
+      }
+      
+      setEmojis(prev => [...prev, ...newEmojis]);
+      
+      // Occasionally spawn power-ups (10% chance)
+      if (Math.random() < 0.1) {
+        setPowerUps(prev => [...prev, createPowerUp()]);
+      }
+      
+      lastSpawnRef.current = now;
+    }
+
+    // Update emoji positions
+    setEmojis(prev => {
+      const updated = prev.map(emoji => ({
+        ...emoji,
+        y: emoji.y + (gameState.activePowerUps.timeFreeze.active ? emoji.speed * 0.3 : emoji.speed)
+      }));
+
+      // Apply magnet effect
+      if (gameState.activePowerUps.magnet.active) {
+        return updated.map(emoji => {
+          const distance = Math.abs(emoji.x - basket.x);
+          if (distance < 150 && emoji.isGood) {
+            const direction = emoji.x < basket.x ? 1 : -1;
+            return {
+              ...emoji,
+              x: emoji.x + direction * 2
+            };
+          }
+          return emoji;
+        });
+      }
+
+      return updated;
+    });
+
+    // Update power-up positions
+    setPowerUps(prev => prev.map(powerUp => ({
+      ...powerUp,
+      y: powerUp.y + (gameState.activePowerUps.timeFreeze.active ? powerUp.speed * 0.3 : powerUp.speed)
+    })));
+
+    // Check collisions with emojis
+    setEmojis(prev => {
+      const remaining = [];
+      let scoreChange = 0;
+      let livesChange = 0;
+
+      const newEffects = [];
+      
+      prev.forEach(emoji => {
+        if (checkCollision(emoji, basket)) {
+          if (emoji.isGood) {
+            scoreChange += emoji.points;
+            soundManager.playCatchSound(); // Use enhanced audio file method
+            
+            // Queue popup text effects
+            newEffects.push({
+              type: 'scoreText',
+              x: emoji.x + emoji.size / 2,
+              y: emoji.y + emoji.size / 2,
+              points: emoji.points
+            });
+            newEffects.push({
+              type: 'starBurst',
+              x: emoji.x + emoji.size / 2,
+              y: emoji.y + emoji.size / 2
+            });
+          } else if (!gameState.activePowerUps.shield.active) {
+            livesChange -= 1;
+            soundManager.playDamageSound(); // Use enhanced audio file method
+            
+            // Queue both score and life popup effects for bad emoji
+            newEffects.push({
+              type: 'scoreText',
+              x: emoji.x + emoji.size / 2,
+              y: emoji.y + emoji.size / 2,
+              points: GAME_CONFIG.SCORING.BAD_EMOJI_PENALTY
+            });
+            // Add life text effect
+            if (window.gameCanvasEffects && window.gameCanvasEffects.createLifeText) {
+              setTimeout(() => {
+                window.gameCanvasEffects.createLifeText(
+                  emoji.x + emoji.size / 2,
+                  emoji.y + emoji.size / 2,
+                  -1
+                );
+              }, 100); // Small delay so both texts are visible
+            }
+          }
+        } else if (emoji.y < 600) {
+          remaining.push(emoji);
+        } else if (emoji.isGood) {
+          // Missed a good emoji
+          if (!gameState.activePowerUps.shield.active) {
+            livesChange -= 0; // Don't lose life for missing good emojis
+          }
+        }
+      });
+
+      // Add effects to queue
+      if (newEffects.length > 0) {
+        setEffectQueue(prev => [...prev, ...newEffects]);
+      }
+
+      if (scoreChange > 0) setScore(s => s + scoreChange);
+      if (livesChange < 0) setLives(l => Math.max(0, l + livesChange));
+
+      return remaining;
+    });
+
+    // Check collisions with power-ups
+    setPowerUps(prev => {
+      const remaining = [];
+      const powerUpEffects = [];
+
+      prev.forEach(powerUp => {
+        if (checkCollision(powerUp, basket)) {
+          activatePowerUp(powerUp.type);
+          // Play different sounds for different power-ups
+          if (powerUp.type === 'magnet') {
+            soundManager.playMagnetSound();
+          } else {
+            soundManager.playPowerUpSound();
+          }
+          
+          // Queue power-up popup text effects
+          powerUpEffects.push({
+            type: 'powerUpText',
+            x: powerUp.x + powerUp.size / 2,
+            y: powerUp.y + powerUp.size / 2,
+            powerUpType: powerUp.type
+          });
+          powerUpEffects.push({
+            type: 'powerUpEffect',
+            x: powerUp.x + powerUp.size / 2,
+            y: powerUp.y + powerUp.size / 2
+          });
+          
+          if (powerUp.type === 'lifeline') {
+            setLives(l => l + 1);
+            
+            // Queue life gain effect
+            powerUpEffects.push({
+              type: 'scoreText',
+              x: powerUp.x + powerUp.size / 2 + 30,
+              y: powerUp.y + powerUp.size / 2 - 10,
+              points: '+1'
+            });
+          }
+        } else if (powerUp.y < 600) {
+          remaining.push(powerUp);
+        }
+      });
+
+      // Add power-up effects to queue
+      if (powerUpEffects.length > 0) {
+        setEffectQueue(prev => [...prev, ...powerUpEffects]);
+      }
+
+      return remaining;
+    });
+
+    // Update power-up timers
+    setGameState(prev => {
+      const updated = { ...prev };
+      Object.keys(updated.activePowerUps).forEach(key => {
+        if (updated.activePowerUps[key].active) {
+          updated.activePowerUps[key].timeLeft = Math.max(0, updated.activePowerUps[key].timeLeft - 16);
+        }
+      });
+      return updated;
+    });
+
+    // Increase difficulty over time
+    setGameState(prev => ({
+      ...prev,
+      speed: 1 + Math.floor(score / GAME_CONFIG.SCORING.DIFFICULTY_INCREASE_INTERVAL) * 0.2,
+      spawnRate: Math.max(GAME_CONFIG.EMOJIS.SPAWN_RATE_MIN, GAME_CONFIG.EMOJIS.SPAWN_RATE_INITIAL - Math.floor(score / GAME_CONFIG.SCORING.SPAWN_RATE_DECREASE_INTERVAL) * 50)
+    }));
+
+    gameLoopRef.current = requestAnimationFrame(gameLoop);
+  }, [gameStarted, isPaused, gameOver, basket, gameState, score, createEmoji, createPowerUp, checkCollision, activatePowerUp]);
+
+  // Start game loop
+  useEffect(() => {
+    if (gameStarted && !isPaused && !gameOver) {
+      gameLoopRef.current = requestAnimationFrame(gameLoop);
+    } else {
+      if (gameLoopRef.current) {
+        cancelAnimationFrame(gameLoopRef.current);
+      }
+    }
+
+    return () => {
+      if (gameLoopRef.current) {
+        cancelAnimationFrame(gameLoopRef.current);
+      }
+    };
+  }, [gameStarted, isPaused, gameOver, gameLoop]);
+
+  // Process effect queue
+  useEffect(() => {
+    if (effectQueue.length > 0) {
+      effectQueue.forEach(effect => {
+        if (window.gameCanvasEffects) {
+          switch (effect.type) {
+            case 'scoreText':
+              window.gameCanvasEffects.createScoreText(effect.x, effect.y, effect.points);
+              break;
+            case 'starBurst':
+              window.gameCanvasEffects.createStarBurst(effect.x, effect.y);
+              break;
+            case 'powerUpText':
+              window.gameCanvasEffects.createPowerUpText(effect.x, effect.y, effect.powerUpType);
+              break;
+            case 'powerUpEffect':
+              window.gameCanvasEffects.createPowerUpEffect(effect.x, effect.y);
+              break;
+            case 'lifeText':
+              window.gameCanvasEffects.createLifeText && window.gameCanvasEffects.createLifeText(effect.x, effect.y, effect.lifeDelta);
+              break;
+          }
+        }
+      });
+      setEffectQueue([]); // Clear the queue
+    }
+  }, [effectQueue]);
+
+  // Check game over condition
+  useEffect(() => {
+    if (lives <= 0 && !gameOver) {
+      setGameOver(true);
+      soundManager.playGameOverSound(); // Use enhanced audio file method
+      soundManager.stopBackgroundMusic(); // Stop background music on game over
+    }
+  }, [lives, gameOver]);
+
+  const startGame = useCallback(async () => {
+    // Initialize sound system
+    await soundManager.init();
+    
+    setScore(0);
+    setLives(3);
+    setGameOver(false);
+    setGameStarted(true);
+    setIsPaused(false);
+    setEmojis([]);
+    setPowerUps([]);
+    setGameState({
+      activePowerUps: {
+        magnet: { active: false, timeLeft: 0 },
+        shield: { active: false, timeLeft: 0 },
+        timeFreeze: { active: false, timeLeft: 0 },
+        lifeline: { active: false, timeLeft: 0 }
+      },
+      speed: 1,
+      spawnRate: 800 // Match the new faster spawn rate
+    });
+    lastSpawnRef.current = Date.now();
+    
+    // Start background music
+    soundManager.playBackgroundMusic(true);
+    
+    // Play a success sound to indicate game start
+    soundManager.playSuccessSound();
+  }, []);
+
+  const resetGame = useCallback(() => {
+    startGame();
+  }, [startGame]);
+
+  return {
+    score,
+    highScore,
+    lives,
+    gameOver,
+    gameStarted,
+    isPaused,
+    emojis,
+    powerUps,
+    basket,
+    gameState,
+    startGame,
+    resetGame,
+    updateBasketPosition,
+    togglePause: () => setIsPaused(prev => !prev),
+    setBasket
+  };
+}

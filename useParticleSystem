@@ -1,0 +1,168 @@
+import { useState, useEffect, useCallback } from 'react';
+import { GAME_CONFIG, COLORS } from '../constants/gameConstants';
+
+export function useParticleSystem() {
+  const [particles, setParticles] = useState([]);
+  const particleId = { current: 0 };
+  const MAX_PARTICLES = 20; // Limit particle count for performance
+
+  const createParticle = useCallback((x, y, type = 'star', text = '', fontSize = 16) => {
+    const particle = {
+      id: particleId.current++,
+      x,
+      y,
+      vx: (Math.random() - 0.5) * 2, // Reduced velocity for performance
+      vy: (Math.random() - 0.5) * 2 - 1,
+      life: 1,
+      decay: type === 'text' ? 0.03 : 0.04, // Faster decay for performance
+      size: Math.random() * 4 + 2, // Smaller particles
+      type,
+      text,
+      fontSize,
+      color: type === 'star' ? COLORS.PARTICLE_STAR : 
+             type === 'explosion' ? COLORS.PARTICLE_EXPLOSION : 
+             type === 'powerup' ? COLORS.PARTICLE_POWERUP : 
+             type === 'text' ? COLORS.PARTICLE_TEXT :
+             COLORS.PARTICLE_TEXT
+    };
+    
+    setParticles(prev => {
+      const newParticles = [...prev, particle];
+      // Limit particle count for performance
+      return newParticles.length > MAX_PARTICLES ? newParticles.slice(-MAX_PARTICLES) : newParticles;
+    });
+  }, []);
+
+  const createExplosion = useCallback((x, y, count = 3) => {
+    for (let i = 0; i < count; i++) {
+      createParticle(x + Math.random() * 10 - 5, y + Math.random() * 10 - 5, 'explosion');
+    }
+  }, [createParticle]);
+
+  const createStarBurst = useCallback((x, y, count = 2) => {
+    for (let i = 0; i < count; i++) {
+      createParticle(x + Math.random() * 8 - 4, y + Math.random() * 8 - 4, 'star');
+    }
+  }, [createParticle]);
+
+  const createPowerUpEffect = useCallback((x, y, count = 3) => {
+    for (let i = 0; i < count; i++) {
+      createParticle(x + Math.random() * 12 - 6, y + Math.random() * 12 - 6, 'powerup');
+    }
+  }, [createParticle]);
+
+  const createScoreText = useCallback((x, y, points) => {
+    const text = points > 0 ? `+${points}` : `${points}`;
+    const color = points > 0 ? COLORS.PARTICLE_SCORE_POSITIVE : COLORS.PARTICLE_SCORE_NEGATIVE;
+    
+    // Single optimized text particle
+    const textParticle = {
+      id: particleId.current++,
+      x: x - 10,
+      y: y - 10,
+      vx: 0,
+      vy: -1, // Slower upward movement
+      life: 1,
+      decay: 0.025, // Faster fade for performance
+      size: 18,
+      type: 'scoreText',
+      text,
+      fontSize: 18,
+      color
+    };
+    setParticles(prev => {
+      const newParticles = [...prev, textParticle];
+      return newParticles.length > MAX_PARTICLES ? newParticles.slice(-MAX_PARTICLES) : newParticles;
+    });
+  }, []);
+
+  const createPowerUpText = useCallback((x, y, powerUpType) => {
+    const powerUpTexts = {
+      magnet: 'MAGNET',
+      shield: 'SHIELD',
+      timeFreeze: 'FREEZE',
+      lifeline: 'LIFE+'
+    };
+    
+    const text = powerUpTexts[powerUpType] || 'POWER';
+    const textParticle = {
+      id: particleId.current++,
+      x: x - 20,
+      y: y - 15,
+      vx: 0,
+      vy: -1,
+      life: 1,
+      decay: 0.02, // Faster fade for performance
+      size: 14,
+      type: 'powerUpText',
+      text,
+      fontSize: 14,
+      color: COLORS.POWERUP
+    };
+    setParticles(prev => {
+      const newParticles = [...prev, textParticle];
+      return newParticles.length > MAX_PARTICLES ? newParticles.slice(-MAX_PARTICLES) : newParticles;
+    });
+  }, []);
+
+  const createLifeText = useCallback((x, y, lifeDelta) => {
+    const text = lifeDelta > 0 ? `+${lifeDelta} LIFE` : `${lifeDelta} LIFE`;
+    const color = lifeDelta > 0 ? COLORS.PARTICLE_SCORE_POSITIVE : COLORS.PARTICLE_SCORE_NEGATIVE;
+    
+    const textParticle = {
+      id: particleId.current++,
+      x: x + 25, // Offset to the right
+      y: y - 10,
+      vx: 0,
+      vy: -1,
+      life: 1,
+      decay: 0.025,
+      size: 16,
+      type: 'lifeText',
+      text,
+      fontSize: 16,
+      color
+    };
+    setParticles(prev => {
+      const newParticles = [...prev, textParticle];
+      return newParticles.length > MAX_PARTICLES ? newParticles.slice(-MAX_PARTICLES) : newParticles;
+    });
+  }, []);
+
+  // Update particles - optimized for performance
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setParticles(prev => {
+        if (prev.length === 0) return prev; // Early return if no particles
+        
+        return prev
+          .map(particle => ({
+            ...particle,
+            x: particle.x + particle.vx,
+            y: particle.y + particle.vy,
+            vy: particle.vy + 0.05, // Reduced gravity for performance
+            life: particle.life - particle.decay
+          }))
+          .filter(particle => particle.life > 0);
+      });
+    }, 32); // 30fps instead of 60fps for better performance
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const clearParticles = useCallback(() => {
+    setParticles([]);
+  }, []);
+
+  return {
+    particles,
+    createParticle,
+    createExplosion,
+    createStarBurst,
+    createPowerUpEffect,
+    createScoreText,
+    createPowerUpText,
+    createLifeText,
+    clearParticles
+  };
+}

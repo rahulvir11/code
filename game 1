@@ -1,3 +1,54 @@
+"use client";
+import React from "react";
+
+const EnergyBar = ({ progress = 0, icon = "⚡" }) => {
+
+   const maxTime = 3000; 
+  const progressPercent = (progress / maxTime) * 100 ;
+  
+  // Add pulsing effect when near full charge
+  const isPulsing = progressPercent > 90;
+
+  return (
+    <div className="relative flex items-center text-center mt-2">
+      {/* Icon with subtle animation */}
+      <span 
+        className={`text-lg transition-transform duration-200 ${isPulsing ? 'animate-pulse scale-110' : ''}`}
+        style={{
+          filter: isPulsing ? 'drop-shadow(0 0 4px rgba(255, 255, 255, 0.8))' : 'none'
+        }}
+      >
+        {icon}
+      </span>
+
+      {/* Bar container */}
+      <div className="w-32 h-5 rounded-full bg-purple-900/40 overflow-hidden border-2 border-purple-400 relative">
+        <div
+          className={`h-full rounded-full bg-gradient-to-r from-purple-500 to-purple-300 transition-all duration-150 ease-out ${
+            isPulsing ? 'shadow-lg shadow-purple-400/50' : ''
+          }`}
+          style={{
+            width: `${progressPercent}%`,
+            transition: 'width 0.15s ease-out, box-shadow 0.15s ease-out'
+          }}
+        ></div>
+        
+        {/* Subtle shine effect */}
+        <div 
+          className="absolute top-0 left-0 h-full w-full pointer-events-none"
+          style={{
+            background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%)',
+            transform: `translateX(${progressPercent - 100}%)`,
+            transition: 'transform 0.15s ease-out'
+          }}
+        />
+      </div>
+    </div>
+  );
+};
+
+export default EnergyBar;
+
 'use client';
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';

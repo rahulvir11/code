@@ -1,0 +1,180 @@
+"use client";
+import React from "react";
+
+const EnergyBar = ({ progress = 0, icon = "⚡" }) => {
+  // Convert progress from 0-1 range to 0-100 percentage
+  // Ensure progress is properly clamped and avoid NaN values
+  const progressPercent = Math.max(0, Math.min(100, (progress || 0) * 100));
+  
+  // Add pulsing effect when near full charge
+  const isPulsing = progressPercent > 90;
+
+  return (
+    <div className="relative flex items-center text-center mt-2">
+      {/* Icon with subtle animation */}
+      <span 
+        className={`text-lg transition-transform duration-200 ${isPulsing ? 'animate-pulse scale-110' : ''}`}
+        style={{
+          filter: isPulsing ? 'drop-shadow(0 0 4px rgba(255, 255, 255, 0.8))' : 'none'
+        }}
+      >
+        {icon}
+      </span>
+
+      {/* Bar container */}
+      <div className="w-32 h-5 rounded-full bg-purple-900/40 overflow-hidden border-2 border-purple-400 relative">
+        <div
+          className={`h-full rounded-full bg-gradient-to-r from-purple-500 to-purple-300 transition-all duration-150 ease-out ${
+            isPulsing ? 'shadow-lg shadow-purple-400/50' : ''
+          }`}
+          style={{
+            width: `${progressPercent}%`,
+            transition: 'width 0.15s ease-out, box-shadow 0.15s ease-out'
+          }}
+        ></div>
+        
+        {/* Subtle shine effect */}
+        <div 
+          className="absolute top-0 left-0 h-full w-full pointer-events-none"
+          style={{
+            background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%)',
+            transform: `translateX(${progressPercent - 100}%)`,
+            transition: 'transform 0.15s ease-out'
+          }}
+        />
+      </div>
+    </div>
+  );
+};
+
+export default EnergyBar;
+
+  <div className="flex flex-col gap-3">
+          {(magnetActive || shieldActive || timeFreezeActive) && (
+            <div
+              className="p-2 rounded-lg transition-all duration-300"
+              style={{
+                backgroundColor: "rgba(147, 51, 234, 0.1)",
+                border: "1px solid rgba(147, 51, 234, 0.3)",
+                boxShadow: "0 0 10px rgba(147, 51, 234, 0.2)",
+              }}
+            >
+              {magnetActive && (
+                <>
+                  <EnergyBar progress={magnetProgress} icon="🧲"></EnergyBar>
+                </>
+              )}
+
+              {shieldActive && (
+                <>
+                  <EnergyBar progress={shieldProgress} icon="🛡️"></EnergyBar>
+                </>
+              )}
+
+              {timeFreezeActive && (
+                <EnergyBar progress={timeFreezeProgress} icon="⏳"></EnergyBar>
+              )}
+            </div>
+          )}
+        </div>
+
+// game loop
+ // Performance optimization: reduce update frequency for non-critical operations
+        const shouldUpdate = frameCount % 1 === 0; // Update every frame
+        const shouldUpdatePowerUps = frameCount % 3 === 0; // Update power-ups every 3rd frame
+        
+        if (shouldUpdate) {
+          update(shouldUpdatePowerUps);
+        }
+// funcation
+   if (shouldUpdatePowerUps) {
+      const newPowerUpStates = {
+        magnetActive: gameObjects.current.effects.magnet.active,
+        magnetProgress: gameLogicRef.current.getPowerUpProgress('magnet'),
+        shieldActive: gameObjects.current.effects.shield.active,
+        shieldProgress: gameLogicRef.current.getPowerUpProgress('shield'),
+        timeFreezeActive: gameObjects.current.effects.timeFreeze.active,
+        timeFreezeProgress: gameLogicRef.current.getPowerUpProgress('timeFreeze')
+      };
+
+      // Only update state if values have significantly changed (increased threshold)
+      setPowerUpStates(prevStates => {
+        const threshold = 0.02; // Increased from 0.005 for better performance
+        if (
+          prevStates.magnetActive !== newPowerUpStates.magnetActive ||
+          Math.abs(prevStates.magnetProgress - newPowerUpStates.magnetProgress) > threshold ||
+          prevStates.shieldActive !== newPowerUpStates.shieldActive ||
+          Math.abs(prevStates.shieldProgress - newPowerUpStates.shieldProgress) > threshold ||
+          prevStates.timeFreezeActive !== newPowerUpStates.timeFreezeActive ||
+          Math.abs(prevStates.timeFreezeProgress - newPowerUpStates.timeFreezeProgress) > threshold
+        ) {
+          return newPowerUpStates;
+        }
+        return prevStates;
+      });
+    }
+
+// Get smooth progress percentage for power-up effects (for UI display)
+  getPowerUpProgress(effectType) {
+    const objects = this.gameObjects.current;
+    const effect = objects.effects[effectType];
+    
+    if (!effect || !effect.active) {
+      return 0;
+    }
+    
+    // If restarting, return smooth restart progress
+    if (effect.isRestarting && effect.restartProgress !== null) {
+      // During restart, animate from current progress to 0, then to full
+      const currentProgress = effect.duration / (effect.maxDuration || 1);
+      const restartProgress = effect.restartProgress;
+      
+      if (restartProgress < 0.5) {
+        // First half: animate current progress to 0
+        return currentProgress * (1 - restartProgress * 2);
+      } else {
+        // Second half: animate from 0 to full
+        return (restartProgress - 0.5) * 2;
+      }
+    }
+    
+    // Normal progress calculation
+    return Math.max(0, effect.duration / (effect.maxDuration || 1));
+  }
+
+
+// gameRef 
+effects: {
+      magnet: { 
+        active: false, 
+        duration: 0, 
+        maxDuration: 0, 
+        isRestarting: false, 
+        restartTime: null, 
+        restartProgress: null 
+      },
+      shield: { 
+        active: false, 
+        duration: 0, 
+        maxDuration: 0, 
+        isRestarting: false, 
+        restartTime: null, 
+        restartProgress: null 
+      },
+      timeFreeze: { 
+        active: false, 
+        duration: 0, 
+        maxDuration: 0, 
+        isRestarting: false, 
+        restartTime: null, 
+        restartProgress: null 
+      },
+      shieldFlash: { 
+        active: false, 
+        duration: 0, 
+        maxDuration: 0, 
+        isRestarting: false, 
+        restartTime: null, 
+        restartProgress: null 
+      }
+    }
